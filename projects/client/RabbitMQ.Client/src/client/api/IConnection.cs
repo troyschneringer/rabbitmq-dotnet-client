@@ -61,6 +61,7 @@ namespace RabbitMQ.Client
     ///</remarks>
     public interface IConnection: NetworkConnection, IDisposable
     {
+        event ConnectionShutdownEventHandler AfterConnectionShutdown;
         ///<summary>Raised when the connection is destroyed.</summary>
         ///<remarks>
         /// If the connection is already destroyed at the time an

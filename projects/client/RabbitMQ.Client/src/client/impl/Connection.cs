@@ -83,6 +83,7 @@ namespace RabbitMQ.Client.Framing.Impl {
 
         public readonly object m_eventLock = new object();
         public ConnectionShutdownEventHandler m_connectionShutdown;
+        public ConnectionShutdownEventHandler m_afterConnectionShutdown;
 
         public volatile ShutdownEventArgs m_closeReason = null;
         public CallbackExceptionEventHandler m_callbackException;
@@ -120,6 +121,34 @@ namespace RabbitMQ.Client.Framing.Impl {
             Open(insist);
             StartHeartbeatTimers();
             AppDomain.CurrentDomain.DomainUnload += HandleDomainUnload;
+        }
+
+
+        public event ConnectionShutdownEventHandler AfterConnectionShutdown
+        {
+            add
+            {
+                bool ok = false;
+                lock (m_eventLock)
+                {
+                    if (m_closeReason == null)
+                    {
+                        m_afterConnectionShutdown += value;
+                        ok = true;
+                    }
+                }
+                if (!ok)
+                {
+                    value(this, m_closeReason);
+                }
+            }
+            remove
+            {
+                lock (m_eventLock)
+                {
+                    m_afterConnectionShutdown -= value;
+                }
+            }
         }
 
         public event ConnectionShutdownEventHandler ConnectionShutdown
@@ -1019,27 +1048,46 @@ namespace RabbitMQ.Client.Framing.Impl {
         ///<summary>Broadcasts notification of the final shutdown of the connection.</summary>
         public void OnShutdown()
         {
-            ConnectionShutdownEventHandler handler;
+            ConnectionShutdownEventHandler shutdownHandler;
             ShutdownEventArgs reason;
             lock (m_eventLock)
             {
-                handler = m_connectionShutdown;
+                shutdownHandler = m_connectionShutdown;
                 reason = m_closeReason;
                 m_connectionShutdown = null;
             }
+
+            RaiseEvent(shutdownHandler, reason);
+            AppDomain.CurrentDomain.DomainUnload -= HandleDomainUnload;
+
+            ConnectionShutdownEventHandler afterShutdownHandler;
+            lock(m_eventLock)
+            {
+                afterShutdownHandler = m_afterConnectionShutdown;
+                reason = m_closeReason;
+                m_afterConnectionShutdown = null;
+            }
+            RaiseEvent(afterShutdownHandler, reason);
+        }
+
+        private void RaiseEvent(Delegate handler, EventArgs args)
+        {
             if (handler != null)
             {
-                foreach (ConnectionShutdownEventHandler h in handler.GetInvocationList()) {
-                    try {
-                        h(this, reason);
-                    } catch (Exception e) {
-                        CallbackExceptionEventArgs args = new CallbackExceptionEventArgs(e);
-                        args.Detail["context"] = "OnShutdown";
-                        OnCallbackException(args);
+                foreach (Delegate h in handler.GetInvocationList())
+                {
+                    try
+                    {
+                        h.DynamicInvoke(this, args);
+                    }
+                    catch (Exception e)
+                    {
+                        var exArgs = new CallbackExceptionEventArgs(e);
+                        exArgs.Detail["context"] = "OnShutdown";
+                        OnCallbackException(exArgs);
                     }
                 }
             }
-            AppDomain.CurrentDomain.DomainUnload -= HandleDomainUnload;
         }
 
         public void OnCallbackException(CallbackExceptionEventArgs args)

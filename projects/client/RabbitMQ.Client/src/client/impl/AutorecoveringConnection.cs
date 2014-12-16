@@ -62,6 +62,8 @@ namespace RabbitMQ.Client.Framing.Impl
         private QueueNameChangeAfterRecoveryEventHandler m_queueNameChange;
         private ConsumerTagChangeAfterRecoveryEventHandler m_consumerTagChange;
 
+        protected List<ConnectionShutdownEventHandler> m_recordedAfterShutdownEventHandlers =
+            new List<ConnectionShutdownEventHandler>();
         protected List<ConnectionShutdownEventHandler> m_recordedShutdownEventHandlers =
             new List<ConnectionShutdownEventHandler>();
         protected List<ConnectionBlockedEventHandler> m_recordedBlockedEventHandlers =
@@ -107,14 +109,8 @@ namespace RabbitMQ.Client.Framing.Impl
                         }                        
                     }
                 };
-            lock(this.m_eventLock)
-            {
-                this.ConnectionShutdown += recoveryListener;
-                if(!this.m_recordedShutdownEventHandlers.Contains(recoveryListener))
-                {
-                    this.m_recordedShutdownEventHandlers.Add(recoveryListener);
-                }
-            }
+            
+            this.AfterConnectionShutdown += recoveryListener;
         }
 
         protected bool ShouldTriggerConnectionRecovery(ShutdownEventArgs args)
@@ -125,6 +121,26 @@ namespace RabbitMQ.Client.Framing.Impl
                     args.Initiator == ShutdownInitiator.Library);
         }
 
+
+        public event ConnectionShutdownEventHandler AfterConnectionShutdown
+        {
+            add
+            {
+                lock (this.m_eventLock)
+                {
+                    m_recordedAfterShutdownEventHandlers.Add(value);
+                    m_delegate.ConnectionShutdown += value;
+                }
+            }
+            remove
+            {
+                lock (this.m_eventLock)
+                {
+                    m_recordedAfterShutdownEventHandlers.Remove(value);
+                    m_delegate.ConnectionShutdown -= value;
+                }
+            }
+        }
 
         public event ConnectionShutdownEventHandler ConnectionShutdown
         {
@@ -518,6 +534,7 @@ namespace RabbitMQ.Client.Framing.Impl
             {
                 this.RecoverConnectionDelegate();
                 this.RecoverConnectionShutdownHandlers();
+                this.RecoverAfterConnectionShutdownHandlers();
                 this.RecoverConnectionBlockedHandlers();
                 this.RecoverConnectionUnblockedHandlers();
 
@@ -549,6 +566,14 @@ namespace RabbitMQ.Client.Framing.Impl
                     Thread.Sleep(m_factory.NetworkRecoveryInterval);
                     // TODO: provide a way to handle these exceptions
                 }
+            }
+        }
+
+        protected void RecoverAfterConnectionShutdownHandlers()
+        {
+            foreach (var eh in this.m_recordedAfterShutdownEventHandlers)
+            {
+                this.m_delegate.AfterConnectionShutdown += eh;
             }
         }
 
